@@ -106,7 +106,9 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
 </div>
 
 <script>
-const APP_VERSION = 'v3';
+const APP_VERSION = 'v4';
+// Home 用 GAS（gas/Code.gs）の仕様を変えたときだけ上げる。古い GAS のままだと警告を出す
+const REQUIRED_GAS_VERSION = '1.1.0';
 const LS = { food:'hd_gas_food', tasks:'hd_gas_tasks', budget:'hd_gas_budget', warn:'hd_warn_days',
   lfood:'hd_link_food', ltasks:'hd_link_tasks', lmed:'hd_link_med' };
 
@@ -136,6 +138,12 @@ function daysUntil(s) {
   if (!s) return null;
   const [y, m, d] = s.split('-').map(Number), [ty, tm, td] = todayStr().split('-').map(Number);
   return Math.round((Date.UTC(y, m-1, d) - Date.UTC(ty, tm-1, td)) / 86400000);
+}
+// '1.10.0' 形式の版を数値で比較する
+function cmpVer(a, b) {
+  const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; }
+  return 0;
 }
 const yen = n => '¥' + Math.round(n).toLocaleString('ja-JP');
 
@@ -173,22 +181,27 @@ async function loadFood() {
   el.innerHTML = html;
 }
 
-/* ---- タスク ---- */
+/* ---- タスク（TODAY タグのものだけ） ---- */
+const TODAY_TAG = 'TODAY';
+function hasTodayTag(t) {
+  return (t.tags || []).some(tg => String(typeof tg === 'string' ? tg : (tg && tg.name) || '').trim().toUpperCase() === TODAY_TAG);
+}
 async function loadTasks() {
-  const head = cardHead('checklist', 'タスク', lsGet(LS.ltasks));
+  const head = cardHead('checklist', 'TODAY', lsGet(LS.ltasks));
   const el = $('cardTasks');
   const url = lsGet(LS.tasks);
   if (!url) { el.innerHTML = head + '<div class="muted">設定で NeoNoting の GAS URL を入れてください</div>'; return 'skip'; }
   const data = await gasCall(url, { action: 'list' });
   const list = Array.isArray(data) ? data : (data && data.tasks) || [];
-  const open = list.filter(t => !t.done).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const open = list.filter(t => !t.done && hasTodayTag(t)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   let html = head + `<div class="sum"><div><small>未完了</small><span class="big">${open.length}</span></div></div>`;
-  open.slice(0, 5).forEach(t => {
+  if (!open.length) html += `<div class="muted">${TODAY_TAG} のタスクはありません</div>`;
+  open.slice(0, 8).forEach(t => {
     const r = t.reminderAt ? new Date(t.reminderAt) : null;
     const rt = r && !isNaN(r) ? `${r.getMonth()+1}/${r.getDate()} ${pad(r.getHours())}:${pad(r.getMinutes())}` : '';
     html += `<div class="row"><span class="nm">${escHtml(t.name)}</span>${rt ? `<span class="meta">${rt}</span>` : ''}</div>`;
   });
-  if (open.length > 5) html += `<div class="muted" style="margin-top:6px">ほか ${open.length - 5} 件</div>`;
+  if (open.length > 8) html += `<div class="muted" style="margin-top:6px">ほか ${open.length - 8} 件</div>`;
   el.innerHTML = html;
 }
 
@@ -200,6 +213,7 @@ async function loadBudget() {
   if (!url) { el.innerHTML = head + '<div class="muted">設定で Home 用 GAS の URL を入れてください</div>'; return 'skip'; }
   const b = await gasCall(url, { action: 'budget' });
   const max = b.categories.length ? b.categories[0].amount : 1;
+  const stale = cmpVer(b.version || '0', REQUIRED_GAS_VERSION) < 0;
   let html = head + `<div class="sum">
     <div><small>支出</small><span class="big">${yen(b.expense)}</span></div>
     <div><small>収入</small><span class="big" style="font-size:clamp(18px,6vw,26px)">${yen(b.income)}</span></div></div>
@@ -208,6 +222,8 @@ async function loadBudget() {
     html += `<div class="cat"><div><span>${escHtml(c.name)}</span><span class="meta">${yen(c.amount)}</span></div>
       <div class="bar"><i style="width:${Math.round(c.amount / max * 100)}%"></i></div></div>`;
   });
+  html += `<div class="muted" style="margin-top:10px;font-size:11px">${b.count}件を集計${b.noDate ? ` / 日付が読めない行 ${b.noDate}件` : ''}</div>`;
+  if (stale) html += `<div class="err-t" style="margin-top:6px">Home 用 GAS が古い版です。Code.gs を貼り直して、新しいバージョンで再デプロイしてください（必要 ${REQUIRED_GAS_VERSION} / 現在 ${escHtml(b.version || '不明')}）</div>`;
   el.innerHTML = html;
 }
 
@@ -224,7 +240,7 @@ async function refresh() {
   setSync('busy');
   const jobs = [
     ['cardFood', loadFood, () => cardHead('fridge', '食品の期限', lsGet(LS.lfood))],
-    ['cardTasks', loadTasks, () => cardHead('checklist', 'タスク', lsGet(LS.ltasks))],
+    ['cardTasks', loadTasks, () => cardHead('checklist', 'TODAY', lsGet(LS.ltasks))],
     ['cardBudget', loadBudget, () => cardHead('wallet', '今月の家計', '')]];
   // 1 つが失敗しても他のカードは表示する
   const results = await Promise.allSettled(jobs.map(j => j[1]()));
