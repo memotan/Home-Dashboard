@@ -43,5 +43,20 @@ Home 用 GAS が同じアカウントで読む（Food Inv. Manager の取込タ�
 - `server.url` は APK に焼き込まれる。リポジトリ名を変えたら直して APK を作り直す。`appId`（`com.homedashboard.app`）は変えない
 - GAS の URL は WebView の localStorage に入る。アプリ内で一度入力すれば残る（ブラウザ版とは別保管）
 - 現状の連携: 戻るボタン（設定画面 → 終了）、前面復帰時の再読込
-- アプリアイコンは未作成（Android 既定）。作るときは Food Inv. Manager の `icons/gen-icon.mjs` が参考になる
 - 署名鍵は PC ごとに別。別の PC でビルドした APK は上書きできないので、一度アンインストールする
+
+## アプリアイコン
+
+ドットで描いた家（Nothing OS 風。背景に消灯ドットの格子を敷き、ドアだけアクセントの緑）。
+`node icons/gen-icon.mjs` が SVG を生成する。図柄を変えるときは SVG を手で直さず、`CONFIG` を変える。
+192 の図面の 32〜160（Android の安全領域）をはみ出すと異常終了する。
+
+| ファイル | 用途 |
+|---|---|
+| `icons/icon.svg` | 地＋図柄。PWA と favicon |
+| `icons/icon-foreground.svg` | 図柄のみ。Android の前景レイヤー |
+| `icons/icon-background.svg` | 地＋消灯ドット。Android の背景レイヤー |
+
+PNG（`icon-192/512.png`、`apple-touch-icon.png`、`icons/android/**`）は SVG から書き出してコミット済み。
+SVG を変えたら作り直す（ブラウザで SVG を各サイズに描画して保存。サイズは Food Inv. Manager の README の表と同じ）。
+Android へは `npm run sync` の最後の `apply-native-icon.mjs` が反映する。**反映には Android Studio でのビルドが必要**（push では変わらない）。
