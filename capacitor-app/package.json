@@ -1,0 +1,25 @@
+{
+  "name": "home-dashboard-app",
+  "version": "1.0.0",
+  "description": "Home Dashboard — 4つの管理アプリの状況を1画面で見る（Capacitor ラッパー）",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/check-path.mjs",
+    "copy": "node scripts/copy-www.mjs",
+    "appname": "node scripts/apply-native-name.mjs",
+    "sync": "npm run copy && cap sync && npm run appname",
+    "open": "cap open android",
+    "build": "npm run sync && cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2"
+  }
+}

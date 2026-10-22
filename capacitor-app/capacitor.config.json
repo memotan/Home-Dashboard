@@ -1,0 +1,21 @@
+{
+  "appId": "com.homedashboard.app",
+  "appName": "Home Dashboard",
+  "webDir": "www",
+  "server": {
+    "url": "https://memotan.github.io/Home-Dashboard/",
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "StatusBar": {
+      "backgroundColor": "#111111",
+      "style": "DARK",
+      "overlaysWebView": false
+    },
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "backgroundColor": "#111111",
+      "showSpinner": false
+    }
+  }
+}

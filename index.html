@@ -104,7 +104,7 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
 </div>
 
 <script>
-const APP_VERSION = 'v1';
+const APP_VERSION = 'v2';
 const LS = { food:'hd_gas_food', tasks:'hd_gas_tasks', budget:'hd_gas_budget', warn:'hd_warn_days',
   lfood:'hd_link_food', ltasks:'hd_link_tasks', lmed:'hd_link_med' };
 
@@ -251,6 +251,20 @@ function saveSettings() {
   closeSettings(); renderMed(); refresh();
 }
 
+// Capacitor（Android アプリ）との連携。window.Capacitor が無ければ何もしない
+function setupCapacitor() {
+  const cap = window.Capacitor;
+  if (!cap || !cap.Plugins || !cap.Plugins.App) return;
+  const App = cap.Plugins.App;
+  // 戻るボタン: 設定画面 → アプリ終了
+  App.addListener('backButton', () => {
+    if ($('settings').style.display === 'block') closeSettings();
+    else App.exitApp();
+  });
+  // 前面に戻ったら更新（visibilitychange が WebView で飛ばないことがあるため）
+  App.addListener('appStateChange', state => { if (state && state.isActive) refresh(); });
+}
+
 function init() {
   const d = new Date();
   $('today').textContent = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} (${'日月火水木金土'[d.getDay()]})`;
@@ -263,6 +277,7 @@ function init() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   ['cardFood','cardTasks','cardBudget'].forEach(id => $(id).innerHTML = '<div class="skeleton">読み込み中...</div>');
   renderMed();
+  setupCapacitor();
   refresh();
 }
 init();
