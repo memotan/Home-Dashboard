@@ -91,6 +91,9 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
     <label>Home 用 GAS の URL（家計簿の集計）</label>
     <input id="inBudget" type="url" placeholder="https://script.google.com/macros/s/.../exec">
     <p class="help">gas/Code.gs を別の GAS プロジェクトとして公開した URL です。手順は README を参照。</p>
+    <label>MedCal の GAS URL（服薬）</label>
+    <input id="inMed" type="url" placeholder="https://script.google.com/macros/s/.../exec">
+    <input id="inMedTok" type="text" placeholder="MedCal の合言葉（GAS に設定した場合）" autocomplete="off" style="margin-top:8px">
     <label>食品の「もうすぐ」と見なす日数</label>
     <input id="inWarn" type="number" min="0" max="30" inputmode="numeric">
     <label>各アプリを開くリンク（任意）</label>
@@ -106,10 +109,10 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
 </div>
 
 <script>
-const APP_VERSION = 'v5';
+const APP_VERSION = 'v6';
 // Home 用 GAS（gas/Code.gs）の仕様を変えたときだけ上げる。古い GAS のままだと警告を出す
 const REQUIRED_GAS_VERSION = '1.1.0';
-const LS = { food:'hd_gas_food', tasks:'hd_gas_tasks', budget:'hd_gas_budget', warn:'hd_warn_days',
+const LS = { food:'hd_gas_food', tasks:'hd_gas_tasks', budget:'hd_gas_budget', med:'hd_gas_med', medTok:'hd_med_token', warn:'hd_warn_days',
   lfood:'hd_link_food', ltasks:'hd_link_tasks', lmed:'hd_link_med' };
 
 const lsGet = (k, d='') => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } };
@@ -123,9 +126,9 @@ function escHtml(s) {
 function safeUrl(u) { return /^https?:\/\//.test(u) ? u : ''; }
 
 // fetch に Content-Type を付けない（付けると CORS プリフライトが飛び GAS が応答できない）
-async function gasCall(url, body) {
+async function gasCall(url, body, token) {
   if (!url) throw new Error('GAS URL が未設定です（設定から入力）');
-  const res = await fetch(url, { method: 'POST', body: JSON.stringify(body) });
+  const res = await fetch(url, { method: 'POST', body: JSON.stringify(token ? { ...body, token } : body) });
   const json = await res.json();
   if (!json.ok) throw new Error(json.error || '不明なエラー');
   return json.data;
@@ -227,10 +230,23 @@ async function loadBudget() {
   el.innerHTML = html;
 }
 
-/* ---- 服薬（未対応） ---- */
-function renderMed() {
-  $('cardMed').innerHTML = cardHead('pill', '服薬', lsGet(LS.lmed)) +
-    '<div class="muted">Medical Calendar は端末内にだけ保存しているため、まだ表示できません。サーバ同期を足したあとに対応します。</div>';
+/* ---- 服薬 ---- */
+async function loadMed() {
+  const head = cardHead('pill', '服薬', lsGet(LS.lmed));
+  const el = $('cardMed');
+  const url = lsGet(LS.med);
+  if (!url) { el.innerHTML = head + '<div class="muted">設定で MedCal の GAS URL を入れてください</div>'; return 'skip'; }
+  const d = await gasCall(url, { action: 'today' }, lsGet(LS.medTok));
+  const taken = d.meds.filter(m => m.count > 0).length;
+  let html = head + `<div class="sum"><div><small>今日 飲んだ薬</small><span class="big">${taken}<span style="font-size:.5em;color:var(--sub)"> / ${d.meds.length}</span></span></div></div>`;
+  if (!d.meds.length) html += '<div class="muted">薬が登録されていません</div>';
+  d.meds.forEach(m => {
+    const color = /^#[0-9a-fA-F]{3,8}$/.test(m.color) ? m.color : 'var(--sub)';
+    html += `<div class="row"><span style="width:10px;height:10px;border-radius:50%;background:${color};flex:none"></span>
+      <span class="nm">${escHtml(m.name)}</span>
+      <span class="badge ${m.count > 0 ? 'info' : ''}" style="${m.count > 0 ? '' : 'color:var(--sub);border:1px solid var(--line)'}">${m.count > 0 ? m.count + '回' : '未'}</span></div>`;
+  });
+  el.innerHTML = html;
 }
 
 /* ---- 更新 ---- */
@@ -241,7 +257,8 @@ async function refresh() {
   const jobs = [
     ['cardFood', loadFood, () => cardHead('fridge', '食品の期限', lsGet(LS.lfood))],
     ['cardTasks', loadTasks, () => cardHead('checklist', 'TODAY', lsGet(LS.ltasks))],
-    ['cardBudget', loadBudget, () => cardHead('wallet', '今月の家計', '')]];
+    ['cardBudget', loadBudget, () => cardHead('wallet', '今月の家計', '')],
+    ['cardMed', loadMed, () => cardHead('pill', '服薬', lsGet(LS.lmed))]];
   // 1 つが失敗しても他のカードは表示する
   const results = await Promise.allSettled(jobs.map(j => j[1]()));
   let failed = 0;
@@ -256,17 +273,17 @@ async function refresh() {
 
 /* ---- 設定 ---- */
 function openSettings() {
-  $('inFood').value = lsGet(LS.food); $('inTasks').value = lsGet(LS.tasks); $('inBudget').value = lsGet(LS.budget);
+  $('inFood').value = lsGet(LS.food); $('inTasks').value = lsGet(LS.tasks); $('inBudget').value = lsGet(LS.budget); $('inMed').value = lsGet(LS.med); $('inMedTok').value = lsGet(LS.medTok);
   $('inWarn').value = warnDays();
   $('inLinkFood').value = lsGet(LS.lfood); $('inLinkTasks').value = lsGet(LS.ltasks); $('inLinkMed').value = lsGet(LS.lmed);
   $('settings').style.display = 'block';
 }
 function closeSettings() { $('settings').style.display = 'none'; }
 function saveSettings() {
-  lsSet(LS.food, $('inFood').value.trim()); lsSet(LS.tasks, $('inTasks').value.trim()); lsSet(LS.budget, $('inBudget').value.trim());
+  lsSet(LS.food, $('inFood').value.trim()); lsSet(LS.tasks, $('inTasks').value.trim()); lsSet(LS.budget, $('inBudget').value.trim()); lsSet(LS.med, $('inMed').value.trim()); lsSet(LS.medTok, $('inMedTok').value.trim());
   lsSet(LS.warn, String(Math.max(0, Number($('inWarn').value) || 0)));
   lsSet(LS.lfood, $('inLinkFood').value.trim()); lsSet(LS.ltasks, $('inLinkTasks').value.trim()); lsSet(LS.lmed, $('inLinkMed').value.trim());
-  closeSettings(); renderMed(); refresh();
+  closeSettings(); refresh();
 }
 
 // Capacitor（Android アプリ）との連携。window.Capacitor が無ければ何もしない
@@ -294,7 +311,7 @@ function init() {
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSettings(); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   ['cardFood','cardTasks','cardBudget'].forEach(id => $(id).innerHTML = '<div class="skeleton">読み込み中...</div>');
-  renderMed();
+  $('cardMed').innerHTML = '<div class="skeleton">読み込み中...</div>';
   setupCapacitor();
   refresh();
 }
