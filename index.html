@@ -91,9 +91,9 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
     <label>Home 用 GAS の URL（家計簿の集計）</label>
     <input id="inBudget" type="url" placeholder="https://script.google.com/macros/s/.../exec">
     <p class="help">gas/Code.gs を別の GAS プロジェクトとして公開した URL です。手順は README を参照。</p>
-    <label>MedCal の GAS URL（服薬）</label>
+    <label>MedCal の GAS URL（昨日の日記）</label>
     <input id="inMed" type="url" placeholder="https://script.google.com/macros/s/.../exec">
-    <input id="inMedTok" type="text" placeholder="MedCal の合言葉（GAS に設定した場合）" autocomplete="off" style="margin-top:8px">
+    <input id="inMedTok" type="text" placeholder="MedCal の合言葉（MEDCAL_TOKEN と同じもの）" autocomplete="off" style="margin-top:8px">
     <label>食品の「もうすぐ」と見なす日数</label>
     <input id="inWarn" type="number" min="0" max="30" inputmode="numeric">
     <label>各アプリを開くリンク（任意）</label>
@@ -109,7 +109,7 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
 </div>
 
 <script>
-const APP_VERSION = 'v6';
+const APP_VERSION = 'v7';
 // Home 用 GAS（gas/Code.gs）の仕様を変えたときだけ上げる。古い GAS のままだと警告を出す
 const REQUIRED_GAS_VERSION = '1.1.0';
 const LS = { food:'hd_gas_food', tasks:'hd_gas_tasks', budget:'hd_gas_budget', med:'hd_gas_med', medTok:'hd_med_token', warn:'hd_warn_days',
@@ -230,22 +230,24 @@ async function loadBudget() {
   el.innerHTML = html;
 }
 
-/* ---- 服薬 ---- */
-async function loadMed() {
-  const head = cardHead('pill', '服薬', lsGet(LS.lmed));
+/* ---- 昨日の日記（MedCal） ---- */
+const DIARY_MAX = 500;
+async function loadDiary() {
+  const head = cardHead('notebook', '昨日の日記', lsGet(LS.lmed));
   const el = $('cardMed');
   const url = lsGet(LS.med);
-  if (!url) { el.innerHTML = head + '<div class="muted">設定で MedCal の GAS URL を入れてください</div>'; return 'skip'; }
-  const d = await gasCall(url, { action: 'today' }, lsGet(LS.medTok));
-  const taken = d.meds.filter(m => m.count > 0).length;
-  let html = head + `<div class="sum"><div><small>今日 飲んだ薬</small><span class="big">${taken}<span style="font-size:.5em;color:var(--sub)"> / ${d.meds.length}</span></span></div></div>`;
-  if (!d.meds.length) html += '<div class="muted">薬が登録されていません</div>';
-  d.meds.forEach(m => {
-    const color = /^#[0-9a-fA-F]{3,8}$/.test(m.color) ? m.color : 'var(--sub)';
-    html += `<div class="row"><span style="width:10px;height:10px;border-radius:50%;background:${color};flex:none"></span>
-      <span class="nm">${escHtml(m.name)}</span>
-      <span class="badge ${m.count > 0 ? 'info' : ''}" style="${m.count > 0 ? '' : 'color:var(--sub);border:1px solid var(--line)'}">${m.count > 0 ? m.count + '回' : '未'}</span></div>`;
-  });
+  if (!url) { el.innerHTML = head + '<div class="muted">設定で MedCal の GAS URL と合言葉を入れてください</div>'; return 'skip'; }
+  const d = await gasCall(url, { action: 'day' }, lsGet(LS.medTok));   // 日付を省略すると GAS 側で昨日になる
+  const note = String(d.note || '').trim();
+  const [, m, day] = String(d.date).split('-');
+  let html = head + `<div class="meta" style="margin-bottom:8px">${Number(m)}/${Number(day)}</div>`;
+  if (!note) {
+    html += '<div class="muted">昨日の日記はありません</div>';
+  } else {
+    const cut = note.length > DIARY_MAX;
+    html += `<div style="white-space:pre-wrap;word-break:break-word;font-size:14px;line-height:1.7">${escHtml(cut ? note.slice(0, DIARY_MAX) + '…' : note)}</div>`;
+    if (cut) html += '<div class="muted" style="margin-top:6px">続きは MedCal で</div>';
+  }
   el.innerHTML = html;
 }
 
@@ -258,7 +260,7 @@ async function refresh() {
     ['cardFood', loadFood, () => cardHead('fridge', '食品の期限', lsGet(LS.lfood))],
     ['cardTasks', loadTasks, () => cardHead('checklist', 'TODAY', lsGet(LS.ltasks))],
     ['cardBudget', loadBudget, () => cardHead('wallet', '今月の家計', '')],
-    ['cardMed', loadMed, () => cardHead('pill', '服薬', lsGet(LS.lmed))]];
+    ['cardMed', loadDiary, () => cardHead('notebook', '昨日の日記', lsGet(LS.lmed))]];
   // 1 つが失敗しても他のカードは表示する
   const results = await Promise.allSettled(jobs.map(j => j[1]()));
   let failed = 0;
