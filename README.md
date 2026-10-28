@@ -10,10 +10,15 @@ NeoNoting / Food Inv. Manager / Budget Manager / Medical Calendar の状況を1�
 | 食品の期限 | Food Inv. Manager の GAS | ブラウザから `list` を直接呼ぶ（判定はこちらで計算し直す） |
 | タスク | NeoNoting の GAS | ブラウザから `list` を直接呼ぶ |
 | 今月の家計 | `gas/Code.gs`（Home 用 GAS） | `budget` を呼ぶ。家計簿のシートを `openById` で読んで集計だけ返す |
+| カレンダー（週表示） | 上の 3 つの取得元 | 食品の期限日・タスクの `reminderAt`・日ごとの支出（Home 用 GAS の `daily`）を 1 週間ぶん集める |
 | 昨日の日記 | MedCal の GAS（`memotan/Medical-Calendar` の `gas/Code.gs`） | `day`（日付省略で昨日）を呼ぶ。MedCal 側で GAS 同期を有効にする必要がある。写真は送られない。合言葉が必須 |
 
 Budget Manager の GAS は「自分のみ」公開でブラウザから読めない。公開設定は緩めず、
 Home 用 GAS が同じアカウントで読む（Food Inv. Manager の取込タブと同じ方式）。
+
+## 並べ替え
+
+設定画面の一番上にある「カードの並び順」で、↑ ↓ ボタンで入れ替える。この端末のブラウザ（アプリ）に保存される。端末ごとに設定が要る。
 
 ## セットアップ
 
@@ -60,3 +65,8 @@ Home 用 GAS が同じアカウントで読む（Food Inv. Manager の取込タ�
 PNG（`icon-192/512.png`、`apple-touch-icon.png`、`icons/android/**`）は SVG から書き出してコミット済み。
 SVG を変えたら作り直す（ブラウザで SVG を各サイズに描画して保存。サイズは Food Inv. Manager の README の表と同じ）。
 Android へは `npm run sync` の最後の `apply-native-icon.mjs` が反映する。**反映には Android Studio でのビルドが必要**（push では変わらない）。
+
+## GAS を更新したとき
+
+`gas/Code.gs` を直したら、GAS エディタに貼り直し、「デプロイを管理 → 編集 → 新バージョン」で再デプロイする。
+カレンダーの支出は GAS 1.2.0 以上が必要（古いままだと、カレンダーに更新を促す文言が出る）。

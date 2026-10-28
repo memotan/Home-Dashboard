@@ -12,7 +12,7 @@
  *  4. デプロイ > ウェブアプリ（実行: 自分 / アクセス: 全員）。発行された URL をホームの設定に入れる
  *     ※URL を知っている人は今月の集計を読める。URL は他人に見せないこと
  */
-const GAS_VERSION = '1.1.0';
+const GAS_VERSION = '1.2.0';
 const TX_SHEET_ = 'Transactions';
 
 function doPost(e) {
@@ -22,6 +22,7 @@ function doPost(e) {
     switch (body.action) {
       case 'ping':   result = { ok: true, data: { version: GAS_VERSION } }; break;
       case 'budget': result = { ok: true, data: budgetSummary_(body.month) }; break;
+      case 'daily':  result = { ok: true, data: dailySpend_(body.from, body.to) }; break;
       default:       result = { ok: false, error: 'unknown action: ' + body.action };
     }
   } catch (err) {
@@ -31,7 +32,7 @@ function doPost(e) {
 }
 
 function doGet() {
-  return ContentService.createTextOutput(JSON.stringify({ version: GAS_VERSION, actions: ['ping', 'budget'] }))
+  return ContentService.createTextOutput(JSON.stringify({ version: GAS_VERSION, actions: ['ping', 'budget', 'daily'] }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -50,21 +51,15 @@ function dateStr_(display) {
   return m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2);
 }
 
-/** month は 'yyyy-MM'。省略時は今月。月と今日は家計簿のスプレッドシートのタイムゾーンで決める */
-function budgetSummary_(month) {
+/** 家計簿の Transactions を読む。日付は表示値から読む（型に依存しない） */
+function openTx_() {
   var id = String(PropertiesService.getScriptProperties().getProperty('BM_SPREADSHEET_ID') || '').trim();
   if (!id) throw new Error('スクリプト プロパティ BM_SPREADSHEET_ID が未設定です');
   var ss = SpreadsheetApp.openById(id);
-  var tz = ss.getSpreadsheetTimeZone();
-  var today = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
-  month = /^\d{4}-\d{2}$/.test(month || '') ? month : today.slice(0, 7);
-
   var sh = ss.getSheetByName(TX_SHEET_);
   if (!sh) throw new Error('「' + TX_SHEET_ + '」シートがありません');
-  var out = { version: GAS_VERSION, month: month, today: today, expense: 0, income: 0, todayExpense: 0,
-              count: 0, rows: 0, noDate: 0, categories: [] };
-  if (sh.getLastRow() < 2) return out;
-
+  var tz = ss.getSpreadsheetTimeZone();
+  if (sh.getLastRow() < 2) return { tz: tz, values: [], shown: [], col: {} };
   var range = sh.getDataRange();
   var values = range.getValues();          // 金額・種別・カテゴリ用
   var shown = range.getDisplayValues();    // 日付用（型に依存しない）
@@ -73,6 +68,17 @@ function budgetSummary_(month) {
   ['date', 'type', 'category', 'amount'].forEach(function (h) {
     if (col[h] === undefined) throw new Error('「' + h + '」列がありません');
   });
+  return { tz: tz, values: values, shown: shown, col: col };
+}
+
+/** month は 'yyyy-MM'。省略時は今月。月と今日は家計簿のスプレッドシートのタイムゾーンで決める */
+function budgetSummary_(month) {
+  var tx = openTx_();
+  var today = Utilities.formatDate(new Date(), tx.tz, 'yyyy-MM-dd');
+  month = /^\d{4}-\d{2}$/.test(month || '') ? month : today.slice(0, 7);
+  var out = { version: GAS_VERSION, month: month, today: today, expense: 0, income: 0, todayExpense: 0,
+              count: 0, rows: 0, noDate: 0, categories: [] };
+  var values = tx.values, shown = tx.shown, col = tx.col;
 
   var byCat = {};
   for (var i = 1; i < values.length; i++) {
@@ -99,4 +105,22 @@ function budgetSummary_(month) {
     .sort(function (a, b) { return b.amount - a.amount; })
     .slice(0, 5);
   return out;
+}
+
+/** 日ごとの支出合計。from / to は 'yyyy-MM-dd'（両端を含む、最大 62 日）。支出のあった日だけ返す */
+function dailySpend_(from, to) {
+  from = dateStr_(from); to = dateStr_(to);
+  if (!from || !to || from > to) throw new Error('from / to を yyyy-MM-dd で指定してください');
+  if ((Date.parse(to) - Date.parse(from)) / 86400000 > 62) throw new Error('期間は 62 日までです');
+  var tx = openTx_();
+  var sum = {}, cnt = {};
+  for (var i = 1; i < tx.values.length; i++) {
+    var r = tx.values[i];
+    if (String(r[tx.col.type]).trim() !== 'expense') continue;
+    var d = dateStr_(tx.shown[i][tx.col.date]);
+    if (!d || d < from || d > to) continue;
+    sum[d] = (sum[d] || 0) + (Number(r[tx.col.amount]) || 0);
+    cnt[d] = (cnt[d] || 0) + 1;
+  }
+  return Object.keys(sum).sort().map(function (d) { return { date: d, expense: sum[d], count: cnt[d] }; });
 }

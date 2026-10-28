@@ -59,6 +59,24 @@ label{display:block;font-size:12px;color:var(--sub);margin:14px 0 4px}
 input{width:100%;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:14px}
 .btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 16px;font-size:14px;cursor:pointer}
 .btn.ghost{background:none;border:1px solid var(--line);color:var(--text)}
+.wk{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin:6px 0 10px}
+.wd{border-radius:10px;padding:6px 0 5px;text-align:center;border:1px solid transparent;cursor:pointer;font-family:var(--mono);min-width:0}
+.wd .dow{font-size:10px;color:var(--sub)}
+.wd .dn{font-size:16px;font-weight:600;margin:2px 0}
+.wd.today .dn{color:var(--accent)}
+.wd.sel{background:var(--bg);border-color:var(--line)}
+.wd.out .dn,.wd.out .dow{opacity:.45}
+.dots{display:flex;justify-content:center;gap:3px;height:6px}
+.dot{width:6px;height:6px;border-radius:50%}
+.dot.expired{background:var(--danger)}.dot.soon{background:var(--warn)}.dot.ok{background:var(--accent)}.dot.task{background:var(--info)}
+.wd .yen{font-size:9px;color:var(--sub);margin-top:4px;height:11px;white-space:nowrap;overflow:hidden}
+.calnav{display:flex;align-items:center;justify-content:space-between;margin-bottom:2px}
+.calnav .rng{font-family:var(--mono);font-size:13px}
+.calnav button{background:none;border:1px solid var(--line);color:var(--text);border-radius:8px;min-width:36px;height:30px;font-size:14px;cursor:pointer;padding:0 8px}
+.calnav .grp{display:flex;gap:6px}
+.dayh{font-size:13px;color:var(--sub);margin:4px 0 2px}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--sub);margin-top:10px}
+.legend i{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px;vertical-align:middle}
 .order-row{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 6px 6px 12px;margin-bottom:6px;font-size:14px}
 .order-row .nm{flex:1}
 .order-row button{background:none;border:1px solid var(--line);color:var(--text);border-radius:8px;width:40px;height:36px;font-size:16px;cursor:pointer}
@@ -81,6 +99,7 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
   <div class="card" id="cardFood"></div>
   <div class="card" id="cardRestock"></div>
   <div class="card" id="cardTasks"></div>
+  <div class="card" id="cardCal"></div>
   <div class="card" id="cardBudget"></div>
   <div class="card" id="cardMed"></div>
 </div>
@@ -116,7 +135,7 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
 </div>
 
 <script>
-const APP_VERSION = 'v9';
+const APP_VERSION = 'v10';
 // Home 用 GAS（gas/Code.gs）の仕様を変えたときだけ上げる。古い GAS のままだと警告を出す
 const REQUIRED_GAS_VERSION = '1.1.0';
 const LS = { food:'hd_gas_food', tasks:'hd_gas_tasks', budget:'hd_gas_budget', med:'hd_gas_med', medTok:'hd_med_token', warn:'hd_warn_days',
@@ -219,12 +238,17 @@ const TODAY_TAG = 'TODAY';
 function hasTodayTag(t) {
   return (t.tags || []).some(tg => String(typeof tg === 'string' ? tg : (tg && tg.name) || '').trim().toUpperCase() === TODAY_TAG);
 }
+let tasksCache = null;
+function fetchTasks() {
+  if (!tasksCache) tasksCache = gasCall(lsGet(LS.tasks), { action: 'list' });
+  return tasksCache;
+}
 async function loadTasks() {
   const head = cardHead('checklist', 'TODAY', lsGet(LS.ltasks));
   const el = $('cardTasks');
   const url = lsGet(LS.tasks);
   if (!url) { el.innerHTML = head + '<div class="muted">設定で NeoNoting の GAS URL を入れてください</div>'; return 'skip'; }
-  const data = await gasCall(url, { action: 'list' });
+  const data = await fetchTasks();
   const list = Array.isArray(data) ? data : (data && data.tasks) || [];
   const open = list.filter(t => !t.done && hasTodayTag(t)).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   let html = head + `<div class="sum"><div><small>未完了</small><span class="big">${open.length}</span></div></div>`;
@@ -236,6 +260,117 @@ async function loadTasks() {
   });
   if (open.length > 8) html += `<div class="muted" style="margin-top:6px">ほか ${open.length - 8} 件</div>`;
   el.innerHTML = html;
+}
+
+/* ---- カレンダー（週表示。食品の期限・タスクのリマインド・日ごとの支出） ---- */
+const cal = { offset: 0, sel: null, foods: [], tasks: [], spend: {}, spendErr: '', notes: [] };
+let spendCache = {};     // 週の開始日 -> { 'yyyy-MM-dd': {expense, count} }。更新のたびに捨てる
+const DOW = ['日', '月', '火', '水', '木', '金', '土'];
+
+// 'yyyy-MM-dd' の日付計算は UTC で行う（Date をローカル時刻で持ち回ると 1 日ずれる）
+function addDays(str, n) {
+  const [y, m, d] = str.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d + n));
+  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
+}
+function dowOf(str) { const [y, m, d] = str.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); }
+function weekStart() { const base = addDays(todayStr(), cal.offset * 7); return addDays(base, -dowOf(base)); }
+function md(str) { const [, m, d] = str.split('-'); return `${Number(m)}/${Number(d)}`; }
+function localDateKey(iso) {
+  const t = new Date(iso);
+  return isNaN(t) ? '' : `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+}
+function foodStatus(d) { return d < 0 ? 'expired' : d <= warnDays() ? 'soon' : 'ok'; }
+
+function calItems(date) {
+  const foods = cal.foods.filter(f => f.expiryDate === date && !f.consumed && Number(f.quantity) !== 0);
+  const tasks = cal.tasks.filter(t => !t.done && t.reminderAt && localDateKey(t.reminderAt) === date)
+    .sort((a, b) => new Date(a.reminderAt) - new Date(b.reminderAt));
+  return { foods, tasks, spend: cal.spend[date] || null };
+}
+
+async function ensureSpend(start) {
+  cal.spendErr = '';
+  const url = lsGet(LS.budget);
+  if (!url) { cal.spend = {}; return; }
+  if (!spendCache[start]) {
+    try {
+      const rows = await gasCall(url, { action: 'daily', from: start, to: addDays(start, 6) });
+      spendCache[start] = Object.fromEntries(rows.map(r => [r.date, r]));
+    } catch (e) {
+      const msg = String(e && e.message || e);
+      cal.spendErr = /unknown action/.test(msg) ? '支出を出すには Home 用 GAS を更新してください（gas/Code.gs を貼り直して再デプロイ）' : '支出を読み込めませんでした: ' + msg;
+      cal.spend = {}; return;
+    }
+  }
+  cal.spend = spendCache[start];
+}
+
+function renderCalendar() {
+  const el = $('cardCal');
+  const start = weekStart(), today = todayStr();
+  const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
+  if (!cal.sel || !days.includes(cal.sel)) cal.sel = days.includes(today) ? today : start;
+
+  let html = cardHead('calendar-week', 'カレンダー', '') + `<div class="calnav">
+    <div class="rng">${md(days[0])} – ${md(days[6])}</div>
+    <div class="grp"><button data-act="prev" aria-label="前の週">‹</button><button data-act="today">今週</button><button data-act="next" aria-label="次の週">›</button></div></div>
+    <div class="wk">`;
+  days.forEach(d => {
+    const it = calItems(d);
+    const worst = it.foods.length ? (it.foods.some(f => daysUntil(f.expiryDate) < 0) ? 'expired' : it.foods.some(f => daysUntil(f.expiryDate) <= warnDays()) ? 'soon' : 'ok') : '';
+    const dots = (worst ? `<span class="dot ${worst}"></span>` : '') + (it.tasks.length ? '<span class="dot task"></span>' : '');
+    const yenS = it.spend ? (it.spend.expense >= 10000 ? (it.spend.expense / 10000).toFixed(1) + '万' : it.spend.expense >= 1000 ? (it.spend.expense / 1000).toFixed(1) + 'k' : String(it.spend.expense)) : '';
+    html += `<div class="wd${d === today ? ' today' : ''}${d === cal.sel ? ' sel' : ''}" data-date="${d}" role="button" aria-label="${md(d)}">
+      <div class="dow">${DOW[dowOf(d)]}</div><div class="dn">${Number(d.slice(8))}</div>
+      <div class="dots">${dots}</div><div class="yen">${yenS ? '¥' + yenS : ''}</div></div>`;
+  });
+  html += '</div>';
+
+  const it = calItems(cal.sel);
+  html += `<div class="dayh">${md(cal.sel)} (${DOW[dowOf(cal.sel)]})</div>`;
+  if (!it.foods.length && !it.tasks.length && !it.spend) html += '<div class="muted">この日の予定・期限・支出はありません</div>';
+  it.foods.forEach(f => {
+    const dd = daysUntil(f.expiryDate), st = foodStatus(dd);
+    const label = dd < 0 ? `${-dd}日超過` : dd === 0 ? '今日' : `あと${dd}日`;
+    const badge = st === 'ok' ? `<span class="badge" style="background:var(--accent);color:#111">${label}</span>` : `<span class="badge ${st}">${label}</span>`;
+    html += `<div class="row"><i class="ti ti-fridge" style="color:var(--sub)"></i><span class="nm">${escHtml(f.name)}</span><span class="meta">${escHtml(f.place)}</span>${badge}</div>`;
+  });
+  it.tasks.forEach(t => {
+    const r = new Date(t.reminderAt);
+    html += `<div class="row"><i class="ti ti-bell" style="color:var(--info)"></i><span class="nm">${escHtml(t.name)}</span><span class="meta">${pad(r.getHours())}:${pad(r.getMinutes())}</span></div>`;
+  });
+  if (it.spend) html += `<div class="row"><i class="ti ti-wallet" style="color:var(--sub)"></i><span class="nm">支出 ${it.spend.count}件</span><span class="meta">${yen(it.spend.expense)}</span></div>`;
+
+  html += '<div class="legend"><span><i style="background:var(--danger)"></i>期限切れ</span><span><i style="background:var(--warn)"></i>もうすぐ</span><span><i style="background:var(--accent)"></i>期限</span><span><i style="background:var(--info)"></i>リマインド</span><span>¥ 支出</span></div>';
+  [...cal.notes, cal.spendErr].filter(Boolean).forEach(m => { html += `<div class="err-t" style="margin-top:6px">${escHtml(m)}</div>`; });
+  el.innerHTML = html;
+}
+
+async function loadCalendar() {
+  const el = $('cardCal');
+  if (!lsGet(LS.food) && !lsGet(LS.tasks) && !lsGet(LS.budget)) {
+    el.innerHTML = cardHead('calendar-week', 'カレンダー', '') + '<div class="muted">設定で GAS の URL を入れると、期限・リマインド・支出が集まります</div>';
+    return 'skip';
+  }
+  // 1 つの取得元が失敗しても、他は表示する
+  const [f, t] = await Promise.allSettled([
+    lsGet(LS.food) ? fetchFoods() : Promise.resolve([]),
+    lsGet(LS.tasks) ? fetchTasks() : Promise.resolve([]),
+  ]);
+  cal.notes = [];
+  cal.foods = f.status === 'fulfilled' ? f.value : (cal.notes.push('食品を読み込めませんでした: ' + (f.reason && f.reason.message || f.reason)), []);
+  const td = t.status === 'fulfilled' ? t.value : (cal.notes.push('タスクを読み込めませんでした: ' + (t.reason && t.reason.message || t.reason)), []);
+  cal.tasks = Array.isArray(td) ? td : (td && td.tasks) || [];
+  await ensureSpend(weekStart());
+  renderCalendar();
+}
+
+async function calNav(act) {
+  if (act === 'prev') cal.offset--; else if (act === 'next') cal.offset++; else cal.offset = 0;
+  cal.sel = null;
+  await ensureSpend(weekStart());
+  renderCalendar();
 }
 
 /* ---- 家計 ---- */
@@ -286,11 +421,12 @@ function setSync(state) { $('sdot').className = 'sdot ' + state; }
 
 async function refresh() {
   setSync('busy');
-  foodsCache = null;
+  foodsCache = null; tasksCache = null; spendCache = {};
   const jobs = [
     ['cardFood', loadFood, () => cardHead('fridge', '食品の期限', lsGet(LS.lfood))],
     ['cardRestock', loadRestock, () => cardHead('shopping-cart', '買い足す', lsGet(LS.lfood))],
     ['cardTasks', loadTasks, () => cardHead('checklist', 'TODAY', lsGet(LS.ltasks))],
+    ['cardCal', loadCalendar, () => cardHead('calendar-week', 'カレンダー', '')],
     ['cardBudget', loadBudget, () => cardHead('wallet', '今月の家計', '')],
     ['cardMed', loadDiary, () => cardHead('notebook', '昨日の日記', lsGet(LS.lmed))]];
   // 1 つが失敗しても他のカードは表示する
@@ -310,6 +446,7 @@ const CARDS = [
   { id: 'cardFood',   name: '食品の期限' },
   { id: 'cardRestock', name: '買い足す' },
   { id: 'cardTasks',  name: 'TODAY' },
+  { id: 'cardCal',    name: 'カレンダー' },
   { id: 'cardBudget', name: '今月の家計' },
   { id: 'cardMed',    name: '昨日の日記' },
 ];
@@ -385,10 +522,16 @@ function init() {
     const b = e.target.closest('button[data-id]');
     if (b) moveCard(b.dataset.id, Number(b.dataset.dir));
   });
+  $('cardCal').addEventListener('click', e => {
+    const nav = e.target.closest('button[data-act]');
+    if (nav) { calNav(nav.dataset.act); return; }
+    const day = e.target.closest('.wd[data-date]');
+    if (day) { cal.sel = day.dataset.date; renderCalendar(); }
+  });
   applyCardOrder();
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSettings(); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
-  ['cardFood','cardRestock','cardTasks','cardBudget'].forEach(id => $(id).innerHTML = '<div class="skeleton">読み込み中...</div>');
+  ['cardFood','cardRestock','cardTasks','cardCal','cardBudget'].forEach(id => $(id).innerHTML = '<div class="skeleton">読み込み中...</div>');
   $('cardMed').innerHTML = '<div class="skeleton">読み込み中...</div>';
   setupCapacitor();
   refresh();
