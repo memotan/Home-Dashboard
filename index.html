@@ -79,6 +79,7 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
   <div class="date" id="today"></div>
 
   <div class="card" id="cardFood"></div>
+  <div class="card" id="cardRestock"></div>
   <div class="card" id="cardTasks"></div>
   <div class="card" id="cardBudget"></div>
   <div class="card" id="cardMed"></div>
@@ -115,7 +116,7 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
 </div>
 
 <script>
-const APP_VERSION = 'v8';
+const APP_VERSION = 'v9';
 // Home 用 GAS（gas/Code.gs）の仕様を変えたときだけ上げる。古い GAS のままだと警告を出す
 const REQUIRED_GAS_VERSION = '1.1.0';
 const LS = { food:'hd_gas_food', tasks:'hd_gas_tasks', budget:'hd_gas_budget', med:'hd_gas_med', medTok:'hd_med_token', warn:'hd_warn_days',
@@ -165,19 +166,24 @@ function cardHead(icon, title, link) {
 function errBox(msg) { return `<div class="err-t">${escHtml(msg)}</div>`; }
 
 /* ---- 食品 ---- */
+// 食品の一覧は「期限」と「買い足す」の 2 枚のカードで使うので、1 回の更新につき 1 回だけ取得する
+let foodsCache = null;
+function fetchFoods() {
+  if (!foodsCache) foodsCache = gasCall(lsGet(LS.food), { action: 'list' });
+  return foodsCache;
+}
 async function loadFood() {
   const head = cardHead('fridge', '食品の期限', lsGet(LS.lfood));
   const el = $('cardFood');
   const url = lsGet(LS.food);
   if (!url) { el.innerHTML = head + '<div class="muted">設定で Food Inv. Manager の GAS URL を入れてください</div>'; return 'skip'; }
-  const foods = await gasCall(url, { action: 'list' });
+  const foods = await fetchFoods();
   const w = warnDays();
   const items = foods
     .filter(f => f.expiryDate && !f.consumed && Number(f.quantity) !== 0)
     .map(f => ({ f, d: daysUntil(f.expiryDate) }))
     .filter(x => x.d <= w)
     .sort((a, b) => a.d - b.d || 0);
-  const restock = foods.filter(f => !f.consumed && Number(f.quantity) === 0).length;
   let html = head;
   if (!items.length) html += '<div class="muted">期限が近い食品はありません</div>';
   items.slice(0, 6).forEach(({ f, d }) => {
@@ -186,7 +192,25 @@ async function loadFood() {
     html += `<div class="row"><span class="nm">${escHtml(f.name)}</span><span class="meta">${escHtml(f.place)}</span><span class="badge ${cls}">${label}</span></div>`;
   });
   if (items.length > 6) html += `<div class="muted" style="margin-top:6px">ほか ${items.length - 6} 件</div>`;
-  if (restock) html += `<div class="row"><span class="nm">切らしている食品</span><span class="badge info">${restock}件</span></div>`;
+  el.innerHTML = html;
+}
+
+/* ---- 買い足す（数量 0 の食品。Food Inv. Manager の「買い足す」タブと同じ条件） ---- */
+const PLACE_ORDER = ['冷蔵', '冷凍', '常温'];
+async function loadRestock() {
+  const head = cardHead('shopping-cart', '買い足す', lsGet(LS.lfood));
+  const el = $('cardRestock');
+  if (!lsGet(LS.food)) { el.innerHTML = head + '<div class="muted">設定で Food Inv. Manager の GAS URL を入れてください</div>'; return 'skip'; }
+  const foods = await fetchFoods();
+  // 保管場所の順、同じ場所の中は登録順（sort は安定）
+  const list = foods.filter(f => !f.consumed && Number(f.quantity) === 0)
+    .sort((a, b) => PLACE_ORDER.indexOf(a.place) - PLACE_ORDER.indexOf(b.place));
+  let html = head + `<div class="sum"><div><small>切らしている食品</small><span class="big">${list.length}</span></div></div>`;
+  if (!list.length) html += '<div class="muted">買い足すものはありません</div>';
+  list.slice(0, 10).forEach(f => {
+    html += `<div class="row"><span class="nm">${escHtml(f.name)}</span><span class="meta">${escHtml(f.place)}</span></div>`;
+  });
+  if (list.length > 10) html += `<div class="muted" style="margin-top:6px">ほか ${list.length - 10} 件</div>`;
   el.innerHTML = html;
 }
 
@@ -262,8 +286,10 @@ function setSync(state) { $('sdot').className = 'sdot ' + state; }
 
 async function refresh() {
   setSync('busy');
+  foodsCache = null;
   const jobs = [
     ['cardFood', loadFood, () => cardHead('fridge', '食品の期限', lsGet(LS.lfood))],
+    ['cardRestock', loadRestock, () => cardHead('shopping-cart', '買い足す', lsGet(LS.lfood))],
     ['cardTasks', loadTasks, () => cardHead('checklist', 'TODAY', lsGet(LS.ltasks))],
     ['cardBudget', loadBudget, () => cardHead('wallet', '今月の家計', '')],
     ['cardMed', loadDiary, () => cardHead('notebook', '昨日の日記', lsGet(LS.lmed))]];
@@ -282,6 +308,7 @@ async function refresh() {
 /* ---- カードの並び順 ---- */
 const CARDS = [
   { id: 'cardFood',   name: '食品の期限' },
+  { id: 'cardRestock', name: '買い足す' },
   { id: 'cardTasks',  name: 'TODAY' },
   { id: 'cardBudget', name: '今月の家計' },
   { id: 'cardMed',    name: '昨日の日記' },
@@ -361,7 +388,7 @@ function init() {
   applyCardOrder();
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSettings(); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
-  ['cardFood','cardTasks','cardBudget'].forEach(id => $(id).innerHTML = '<div class="skeleton">読み込み中...</div>');
+  ['cardFood','cardRestock','cardTasks','cardBudget'].forEach(id => $(id).innerHTML = '<div class="skeleton">読み込み中...</div>');
   $('cardMed').innerHTML = '<div class="skeleton">読み込み中...</div>';
   setupCapacitor();
   refresh();
