@@ -59,6 +59,10 @@ label{display:block;font-size:12px;color:var(--sub);margin:14px 0 4px}
 input{width:100%;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:14px}
 .btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 16px;font-size:14px;cursor:pointer}
 .btn.ghost{background:none;border:1px solid var(--line);color:var(--text)}
+.order-row{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 6px 6px 12px;margin-bottom:6px;font-size:14px}
+.order-row .nm{flex:1}
+.order-row button{background:none;border:1px solid var(--line);color:var(--text);border-radius:8px;width:40px;height:36px;font-size:16px;cursor:pointer}
+.order-row button:disabled{opacity:.3;cursor:default}
 .help{font-size:12px;color:var(--sub);margin-top:4px;line-height:1.5}
 </style>
 </head>
@@ -84,6 +88,8 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
   <div class="in">
     <h2>設定</h2>
     <p class="help">ここに入れた URL はこの端末のブラウザ（localStorage）にだけ保存されます。</p>
+    <label>カードの並び順（変更はすぐ反映されます）</label>
+    <div id="orderList"></div>
     <label>Food Inv. Manager の GAS URL</label>
     <input id="inFood" type="url" placeholder="https://script.google.com/macros/s/.../exec">
     <label>NeoNoting の GAS URL</label>
@@ -109,11 +115,11 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
 </div>
 
 <script>
-const APP_VERSION = 'v7';
+const APP_VERSION = 'v8';
 // Home 用 GAS（gas/Code.gs）の仕様を変えたときだけ上げる。古い GAS のままだと警告を出す
 const REQUIRED_GAS_VERSION = '1.1.0';
 const LS = { food:'hd_gas_food', tasks:'hd_gas_tasks', budget:'hd_gas_budget', med:'hd_gas_med', medTok:'hd_med_token', warn:'hd_warn_days',
-  lfood:'hd_link_food', ltasks:'hd_link_tasks', lmed:'hd_link_med' };
+  lfood:'hd_link_food', ltasks:'hd_link_tasks', lmed:'hd_link_med', order:'hd_card_order' };
 
 const lsGet = (k, d='') => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
@@ -273,11 +279,49 @@ async function refresh() {
   setSync(failed ? 'err' : 'ok');
 }
 
+/* ---- カードの並び順 ---- */
+const CARDS = [
+  { id: 'cardFood',   name: '食品の期限' },
+  { id: 'cardTasks',  name: 'TODAY' },
+  { id: 'cardBudget', name: '今月の家計' },
+  { id: 'cardMed',    name: '昨日の日記' },
+];
+// 保存された順を使い、知らない id は捨て、足りないカードは末尾に足す
+function cardOrder() {
+  let saved = [];
+  try { saved = JSON.parse(lsGet(LS.order, '[]')); } catch {}
+  const ids = CARDS.map(c => c.id);
+  const out = (Array.isArray(saved) ? saved : []).filter((id, i, a) => ids.includes(id) && a.indexOf(id) === i);
+  ids.forEach(id => { if (!out.includes(id)) out.push(id); });
+  return out;
+}
+function applyCardOrder() {
+  const app = $('app');
+  cardOrder().forEach(id => app.appendChild($(id)));   // 既存の要素を並べ替えるだけ（中身は触らない）
+}
+function renderOrderList() {
+  const order = cardOrder();
+  $('orderList').innerHTML = order.map((id, i) => {
+    const name = CARDS.find(c => c.id === id).name;
+    return `<div class="order-row"><span class="nm">${escHtml(name)}</span>
+      <button data-id="${id}" data-dir="-1" aria-label="${escHtml(name)}を上へ" ${i === 0 ? 'disabled' : ''}>↑</button>
+      <button data-id="${id}" data-dir="1" aria-label="${escHtml(name)}を下へ" ${i === order.length - 1 ? 'disabled' : ''}>↓</button></div>`;
+  }).join('');
+}
+function moveCard(id, dir) {
+  const order = cardOrder(), i = order.indexOf(id), j = i + dir;
+  if (i < 0 || j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  lsSet(LS.order, JSON.stringify(order));
+  applyCardOrder(); renderOrderList();
+}
+
 /* ---- 設定 ---- */
 function openSettings() {
   $('inFood').value = lsGet(LS.food); $('inTasks').value = lsGet(LS.tasks); $('inBudget').value = lsGet(LS.budget); $('inMed').value = lsGet(LS.med); $('inMedTok').value = lsGet(LS.medTok);
   $('inWarn').value = warnDays();
   $('inLinkFood').value = lsGet(LS.lfood); $('inLinkTasks').value = lsGet(LS.ltasks); $('inLinkMed').value = lsGet(LS.lmed);
+  renderOrderList();
   $('settings').style.display = 'block';
 }
 function closeSettings() { $('settings').style.display = 'none'; }
@@ -310,6 +354,11 @@ function init() {
   $('btnSettings').onclick = openSettings;
   $('btnClose').onclick = closeSettings;
   $('btnSave').onclick = saveSettings;
+  $('orderList').addEventListener('click', e => {
+    const b = e.target.closest('button[data-id]');
+    if (b) moveCard(b.dataset.id, Number(b.dataset.dir));
+  });
+  applyCardOrder();
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSettings(); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   ['cardFood','cardTasks','cardBudget'].forEach(id => $(id).innerHTML = '<div class="skeleton">読み込み中...</div>');
