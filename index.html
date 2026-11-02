@@ -32,7 +32,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Hiragino 
 .date{font-family:var(--mono);color:var(--sub);font-size:13px;margin-bottom:14px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
 .card h2{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--sub);font-weight:600;margin-bottom:10px}
-.card h2 .go{margin-left:auto;color:var(--sub);font-size:18px;text-decoration:none}
+.card h2 .go{margin:-8px -8px -8px auto;min-width:36px;min-height:36px;display:inline-flex;align-items:center;justify-content:center;color:var(--sub);font-size:18px;text-decoration:none}
 .big{font-family:var(--num);font-size:clamp(28px,9vw,40px);font-weight:900;letter-spacing:.04em}
 .row{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--line);font-size:14px}
 .row:first-of-type{border-top:none}
@@ -77,6 +77,8 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
 .dayh{font-size:13px;color:var(--sub);margin:4px 0 2px}
 .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--sub);margin-top:10px}
 .legend i{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px;vertical-align:middle}
+.toast{position:fixed;left:16px;right:16px;bottom:calc(20px + env(safe-area-inset-bottom));max-width:448px;margin:0 auto;background:#2a2a2a;border:1px solid var(--line);color:var(--text);padding:12px 14px;border-radius:12px;font-size:13px;z-index:20;opacity:0;pointer-events:none;transition:opacity .2s}
+.toast.show{opacity:1}
 .order-row{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 6px 6px 12px;margin-bottom:6px;font-size:14px}
 .order-row .nm{flex:1}
 .order-row button{background:none;border:1px solid var(--line);color:var(--text);border-radius:8px;width:40px;height:36px;font-size:16px;cursor:pointer}
@@ -104,6 +106,8 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
   <div class="card" id="cardMed"></div>
 </div>
 
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
 <div id="settings">
   <div class="in">
     <h2>設定</h2>
@@ -122,7 +126,8 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
     <input id="inMedTok" type="text" placeholder="MedCal の合言葉（MEDCAL_TOKEN と同じもの）" autocomplete="off" style="margin-top:8px">
     <label>食品の「もうすぐ」と見なす日数</label>
     <input id="inWarn" type="number" min="0" max="30" inputmode="numeric">
-    <label>各アプリを開くリンク（任意）</label>
+    <label>各アプリを開くリンク（任意。ブラウザ版用）</label>
+    <p class="help" style="margin:0 0 6px">スマホのアプリ版では、入っているアプリを直接開きます。開けないとき（入っていない場合）に、ここの URL を開きます。</p>
     <input id="inLinkFood" type="url" placeholder="Food Inv. Manager の URL">
     <input id="inLinkTasks" type="url" placeholder="NeoNoting の URL" style="margin-top:8px">
     <input id="inLinkMed" type="url" placeholder="Medical Calendar の URL" style="margin-top:8px">
@@ -135,7 +140,7 @@ input{width:100%;background:var(--card);color:var(--text);border:1px solid var(-
 </div>
 
 <script>
-const APP_VERSION = 'v10';
+const APP_VERSION = 'v11';
 // Home 用 GAS（gas/Code.gs）の仕様を変えたときだけ上げる。古い GAS のままだと警告を出す
 const REQUIRED_GAS_VERSION = '1.1.0';
 const LS = { food:'hd_gas_food', tasks:'hd_gas_tasks', budget:'hd_gas_budget', med:'hd_gas_med', medTok:'hd_med_token', warn:'hd_warn_days',
@@ -178,9 +183,50 @@ const yen = n => '¥' + Math.round(n).toLocaleString('ja-JP');
 
 function warnDays() { const n = Number(lsGet(LS.warn, '3')); return isFinite(n) && n >= 0 ? n : 3; }
 
-function cardHead(icon, title, link) {
-  const a = safeUrl(link);
-  return `<h2><i class="ti ti-${icon}"></i>${escHtml(title)}${a ? `<a class="go" href="${escHtml(a)}" aria-label="${escHtml(title)}を開く"><i class="ti ti-external-link"></i></a>` : ''}</h2>`;
+// 各カードから開く、姉妹アプリの Android パッケージ名（= capacitor.config.json の appId）。
+// capacitor-app/scripts/apply-native-queries.mjs が、この範囲の内側から読んで AndroidManifest の <queries> に書く。
+// 値を変えたら、アプリを再ビルドする（Android 11 以降は <queries> に無いアプリを起動できない）。
+// APP_PACKAGES:begin
+const APP_PACKAGES = {
+  food:   'com.foodmanager.app',   // Food Inv. Manager
+  tasks:  'com.neonoting.app',     // NeoNoting
+  budget: 'com.kei.kakeibo',       // Budget Manager
+  med:    'com.kei.medcal',        // MedCal
+};
+// APP_PACKAGES:end
+function isNativeApp() { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); }
+
+// app: APP_PACKAGES のキー。アプリ版（Capacitor）では、入っているアプリを直接開く。
+// ブラウザ版では、設定した URL（link）だけを開く
+function cardHead(icon, title, link, app) {
+  const url = safeUrl(link), pkg = app && isNativeApp() ? APP_PACKAGES[app] : '';
+  const a = url || pkg
+    ? `<a class="go" href="${url ? escHtml(url) : '#'}"${pkg ? ` data-pkg="${escHtml(pkg)}"` : ''} aria-label="${escHtml(title)}を開く"><i class="ti ti-external-link"></i></a>`
+    : '';
+  return `<h2><i class="ti ti-${icon}"></i>${escHtml(title)}${a}</h2>`;
+}
+
+let toastTimer = null;
+function toast(msg) {
+  const el = $('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+// 姉妹アプリを起動する。起動できなければ（入っていない等）、設定した URL があればそれを開く
+async function openApp(pkg, fallbackUrl) {
+  const launcher = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.AppLauncher;
+  if (!launcher) {
+    if (fallbackUrl && fallbackUrl !== '#') { window.location.href = fallbackUrl; return; }
+    toast('起動用のプラグインがありません。ホームのアプリを、再ビルドしてください');
+    return;
+  }
+  let ok = false;
+  try { ok = !!(await launcher.openUrl({ url: pkg })).completed; } catch (e) { ok = false; }
+  if (ok) return;
+  if (fallbackUrl && fallbackUrl !== '#') { window.location.href = fallbackUrl; return; }
+  toast('アプリを開けませんでした（入っていない可能性があります）');
 }
 function errBox(msg) { return `<div class="err-t">${escHtml(msg)}</div>`; }
 
@@ -192,7 +238,7 @@ function fetchFoods() {
   return foodsCache;
 }
 async function loadFood() {
-  const head = cardHead('fridge', '食品の期限', lsGet(LS.lfood));
+  const head = cardHead('fridge', '食品の期限', lsGet(LS.lfood), 'food');
   const el = $('cardFood');
   const url = lsGet(LS.food);
   if (!url) { el.innerHTML = head + '<div class="muted">設定で Food Inv. Manager の GAS URL を入れてください</div>'; return 'skip'; }
@@ -217,7 +263,7 @@ async function loadFood() {
 /* ---- 買い足す（数量 0 の食品。Food Inv. Manager の「買い足す」タブと同じ条件） ---- */
 const PLACE_ORDER = ['冷蔵', '冷凍', '常温'];
 async function loadRestock() {
-  const head = cardHead('shopping-cart', '買い足す', lsGet(LS.lfood));
+  const head = cardHead('shopping-cart', '買い足す', lsGet(LS.lfood), 'food');
   const el = $('cardRestock');
   if (!lsGet(LS.food)) { el.innerHTML = head + '<div class="muted">設定で Food Inv. Manager の GAS URL を入れてください</div>'; return 'skip'; }
   const foods = await fetchFoods();
@@ -244,7 +290,7 @@ function fetchTasks() {
   return tasksCache;
 }
 async function loadTasks() {
-  const head = cardHead('checklist', 'TODAY', lsGet(LS.ltasks));
+  const head = cardHead('checklist', 'TODAY', lsGet(LS.ltasks), 'tasks');
   const el = $('cardTasks');
   const url = lsGet(LS.tasks);
   if (!url) { el.innerHTML = head + '<div class="muted">設定で NeoNoting の GAS URL を入れてください</div>'; return 'skip'; }
@@ -375,7 +421,7 @@ async function calNav(act) {
 
 /* ---- 家計 ---- */
 async function loadBudget() {
-  const head = cardHead('wallet', '今月の家計', '');
+  const head = cardHead('wallet', '今月の家計', '', 'budget');
   const el = $('cardBudget');
   const url = lsGet(LS.budget);
   if (!url) { el.innerHTML = head + '<div class="muted">設定で Home 用 GAS の URL を入れてください</div>'; return 'skip'; }
@@ -398,7 +444,7 @@ async function loadBudget() {
 /* ---- 昨日の日記（MedCal） ---- */
 const DIARY_MAX = 500;
 async function loadDiary() {
-  const head = cardHead('notebook', '昨日の日記', lsGet(LS.lmed));
+  const head = cardHead('notebook', '昨日の日記', lsGet(LS.lmed), 'med');
   const el = $('cardMed');
   const url = lsGet(LS.med);
   if (!url) { el.innerHTML = head + '<div class="muted">設定で MedCal の GAS URL と合言葉を入れてください</div>'; return 'skip'; }
@@ -423,12 +469,12 @@ async function refresh() {
   setSync('busy');
   foodsCache = null; tasksCache = null; spendCache = {};
   const jobs = [
-    ['cardFood', loadFood, () => cardHead('fridge', '食品の期限', lsGet(LS.lfood))],
-    ['cardRestock', loadRestock, () => cardHead('shopping-cart', '買い足す', lsGet(LS.lfood))],
-    ['cardTasks', loadTasks, () => cardHead('checklist', 'TODAY', lsGet(LS.ltasks))],
+    ['cardFood', loadFood, () => cardHead('fridge', '食品の期限', lsGet(LS.lfood), 'food')],
+    ['cardRestock', loadRestock, () => cardHead('shopping-cart', '買い足す', lsGet(LS.lfood), 'food')],
+    ['cardTasks', loadTasks, () => cardHead('checklist', 'TODAY', lsGet(LS.ltasks), 'tasks')],
     ['cardCal', loadCalendar, () => cardHead('calendar-week', 'カレンダー', '')],
-    ['cardBudget', loadBudget, () => cardHead('wallet', '今月の家計', '')],
-    ['cardMed', loadDiary, () => cardHead('notebook', '昨日の日記', lsGet(LS.lmed))]];
+    ['cardBudget', loadBudget, () => cardHead('wallet', '今月の家計', '', 'budget')],
+    ['cardMed', loadDiary, () => cardHead('notebook', '昨日の日記', lsGet(LS.lmed), 'med')]];
   // 1 つが失敗しても他のカードは表示する
   const results = await Promise.allSettled(jobs.map(j => j[1]()));
   let failed = 0;
@@ -518,6 +564,12 @@ function init() {
   $('btnSettings').onclick = openSettings;
   $('btnClose').onclick = closeSettings;
   $('btnSave').onclick = saveSettings;
+  document.addEventListener('click', e => {
+    const a = e.target.closest('a.go[data-pkg]');
+    if (!a) return;
+    e.preventDefault();
+    openApp(a.dataset.pkg, a.getAttribute('href'));
+  });
   $('orderList').addEventListener('click', e => {
     const b = e.target.closest('button[data-id]');
     if (b) moveCard(b.dataset.id, Number(b.dataset.dir));

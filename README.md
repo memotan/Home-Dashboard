@@ -47,7 +47,7 @@ Home 用 GAS が同じアカウントで読む（Food Inv. Manager の取込タ�
 - `npm run sync` が要るのは、`capacitor.config.json` やプラグインを変えたときだけ
 - `server.url` は APK に焼き込まれる。リポジトリ名を変えたら直して APK を作り直す。`appId`（`com.homedashboard.app`）は変えない
 - GAS の URL は WebView の localStorage に入る。アプリ内で一度入力すれば残る（ブラウザ版とは別保管）
-- 現状の連携: 戻るボタン（設定画面 → 終了）、前面復帰時の再読込
+- 現状の連携: 戻るボタン（設定画面 → 終了）、前面復帰時の再読込、**他のアプリを直接起動**（下記）
 - 署名鍵は PC ごとに別。別の PC でビルドした APK は上書きできないので、一度アンインストールする
 
 ## アプリアイコン
@@ -70,3 +70,20 @@ Android へは `npm run sync` の最後の `apply-native-icon.mjs` が反映す�
 
 `gas/Code.gs` を直したら、GAS エディタに貼り直し、「デプロイを管理 → 編集 → 新バージョン」で再デプロイする。
 カレンダーの支出は GAS 1.2.0 以上が必要（古いままだと、カレンダーに更新を促す文言が出る）。
+
+## 他のアプリを開く（アプリ版）
+
+各カードの見出しの右にある「↗」を押すと、スマホにインストール済みの該当アプリを**直接起動**する
+（ブラウザは開かない）。ブラウザ版では、設定の「各アプリを開くリンク」に入れた URL を開く。
+
+| カード | 起動するアプリ（`appId`） |
+|---|---|
+| 食品の期限・買い足す | Food Inv. Manager（`com.foodmanager.app`） |
+| TODAY | NeoNoting（`com.neonoting.app`） |
+| 今月の家計 | Budget Manager（`com.kei.kakeibo`） |
+| 昨日の日記 | MedCal（`com.kei.medcal`） |
+
+- 仕組み: `@capacitor/app-launcher` の `openUrl` にパッケージ名を渡す。Android 11 以降は、起動したいアプリを `AndroidManifest.xml` の `<queries>` に書く必要がある。`android/` は生成物なので、`npm run sync` の最後の `scripts/apply-native-queries.mjs` が、`index.html` の `APP_PACKAGES` から書き込む（何度実行しても同じ結果）
+- **この機能を入れたあと、ホームのアプリは、一度再ビルドが必要**（プラグインと `<queries>` はネイティブ側の変更のため。push だけでは変わらない）。`cd capacitor-app` → `npm install` → `npm run sync` → Android Studio でビルド。再ビルド前は、「起動用のプラグインがありません」と出る
+- 起動できないとき（アプリが入っていない等）、「各アプリを開くリンク」の URL があればそれを開き、無ければ案内を出す
+- **姉妹アプリの `appId` を変えると、起動できなくなる**。変えるなら、`APP_PACKAGES` も直して再ビルドする

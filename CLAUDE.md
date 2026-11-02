@@ -73,6 +73,10 @@ Capacitor で Android アプリにも包んである。**ホームから書き�
 - **`appId`（`com.homedashboard.app`）は変えない**（別のアプリとして入ってしまう）。`server.url` は APK に焼き込まれるので、リポジトリ名を変えたら直して APK を作り直す
 - ネイティブ側（プラグイン・設定・名前・アイコン）を変えたときだけ再ビルドが必要: `cd capacitor-app` → `npm run sync` → Android Studio でビルド
 - **リポジトリはパスに日本語を含まない場所に置く**（Gradle が失敗する）。署名鍵は PC ごとに別なので、別の PC でビルドした APK は上書きできず、一度アンインストールが要る
+- **他のアプリの起動**: カードの「↗」は、アプリ版では `AppLauncher.openUrl({ url: パッケージ名 })` で姉妹アプリを直接起動する（`cardHead` の第 4 引数 `app` と `APP_PACKAGES`、`openApp()`）。ブラウザ版では設定の URL を開く。起動できなければ、URL があればそれを開き、無ければ `toast()` で案内する
+  - **パッケージ名の正本は `index.html` の `APP_PACKAGES`**（`APP_PACKAGES:begin` / `end` の目印の内側）。`scripts/apply-native-queries.mjs` がここを読み、Android 11 以降で必須の `AndroidManifest.xml` の `<queries>` に書く。**二重に書かない**。`android/` は git 管理外の生成物なので、`<queries>` は `npm run sync` のたびに書き込む（冪等）
+  - 姉妹アプリの `appId`（Food: `com.foodmanager.app`、NeoNoting: `com.neonoting.app`、Budget: `com.kei.kakeibo`、MedCal: `com.kei.medcal`）を変えると、起動できなくなる。変えたら `APP_PACKAGES` を直して、ホームのアプリを再ビルドする
+  - プラグインの JS は、ビルド工程がないため `window.Capacitor.Plugins.AppLauncher` のようにグローバル経由で参照する
 - Android 連携は `setupCapacitor()`（戻るボタン、前面復帰時の再読込）に閉じ込めてある。`window.Capacitor` が無ければ何もしないので、同じファイルがブラウザでも動く。ビルド工程がないため `import` は使えない
 
 ## アイコン

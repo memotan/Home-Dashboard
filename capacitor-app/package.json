@@ -9,13 +9,15 @@
     "copy": "node scripts/copy-www.mjs",
     "appname": "node scripts/apply-native-name.mjs",
     "appicon": "node scripts/apply-native-icon.mjs",
-    "sync": "npm run copy && cap sync && npm run appname && npm run appicon",
+    "sync": "npm run copy && cap sync && npm run appname && npm run appicon && npm run queries",
     "open": "cap open android",
-    "build": "npm run sync && cap open android"
+    "build": "npm run sync && cap open android",
+    "queries": "node scripts/apply-native-queries.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",
     "@capacitor/app": "^8.1.1",
+    "@capacitor/app-launcher": "^8.0.1",
     "@capacitor/core": "^8.5.2",
     "@capacitor/splash-screen": "^8.0.2",
     "@capacitor/status-bar": "^8.0.3"
